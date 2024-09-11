@@ -1,16 +1,9 @@
 from typing import List, Tuple, Union, Optional
 import numpy as np
 from itertools import product
+import math
 
-StringNumberList = List[Tuple[str, Union[int, float]]]
-
-pauli_dict = {'I': np.eye(2),
-              'X': np.array([[0, 1], [1, 0]]),
-              'Y': np.array([[0, -1j], [1j, 0]]),
-              'Z': np.array([[1, 0], [0, -1]])}
-
-
-def check_pauli_string(P:str)->bool:
+def check_pauli_string(P: str) -> bool:
     """
     checks if a certian str as a pauli string
     Args:
@@ -29,7 +22,7 @@ def check_pauli_string(P:str)->bool:
     return True
 
 
-def pauli_string_multiplication(P1:str, P2:str)->Tuple[str,float]:
+def pauli_string_multiplication(P1: str, P2: str) -> Tuple[str, float]:
     """
     Multiplies two pauli strings.
     Args:
@@ -42,8 +35,10 @@ def pauli_string_multiplication(P1:str, P2:str)->Tuple[str,float]:
 
     """
     assert len(P1) == len(P2), f'PauliStrings needs to be the same length! but got lengths {len(P1)} and {len(P2)}'
-    assert check_pauli_string(P1), f'First PauliString is not valid! should only contain charachters "X,Y,Z,I" but is {P1}'
-    assert check_pauli_string(P2), f'Second PauliString is not valid! should only contain charachters "X,Y,Z,I" but is {P2}'
+    assert check_pauli_string(
+        P1), f'First PauliString is not valid! should only contain charachters "X,Y,Z,I" but is {P1}'
+    assert check_pauli_string(
+        P2), f'Second PauliString is not valid! should only contain charachters "X,Y,Z,I" but is {P2}'
 
     P3 = []
     phase_factor = 1
@@ -75,14 +70,14 @@ def pauli_string_multiplication(P1:str, P2:str)->Tuple[str,float]:
     return ''.join(P3), phase_factor
 
 
-def simplify(pauli_decomposition:StringNumberList)->StringNumberList:
+def simplify(pauli_decomposition: List[Tuple[str, Union[int, float]]]) -> List[Tuple[str, Union[int, float]]]:
     """
 
     Args:
-        pauli_decomposition: a StringNumberList representing an operator, with possible repetitions between pauli strings.
+        pauli_decomposition: a List[Tuple[str, Union[int, float]]] representing an operator, with possible repetitions between pauli strings.
 
     Returns:
-        a new StringNumberList representing an operator, with no repetitions between Pauli strings.
+        a new List[Tuple[str, Union[int, float]]] representing an operator, with no repetitions between Pauli strings.
     """
     new_pauli_decomposition = []
     new_strings = {}
@@ -95,12 +90,11 @@ def simplify(pauli_decomposition:StringNumberList)->StringNumberList:
             new_strings[s] += coeff
     for s in new_strings:
         if new_strings[s] != 0:
-            new_pauli_decomposition.append((s,new_strings[s]))
+            new_pauli_decomposition.append((s, new_strings[s]))
     return new_pauli_decomposition
 
 
-
-def tensor(list_of_arrays:List[np.ndarray])->np.ndarray:
+def tensor(list_of_arrays: List[np.ndarray]) -> np.ndarray:
     """
 
     Args:
@@ -116,7 +110,7 @@ def tensor(list_of_arrays:List[np.ndarray])->np.ndarray:
     return temp_prod
 
 
-def dag(A:np.ndarray)->np.ndarray:
+def dag(A: np.ndarray) -> np.ndarray:
     """
 
     Args:
@@ -131,13 +125,13 @@ def dag(A:np.ndarray)->np.ndarray:
     return A.swapaxes(-2, -1).conj()
 
 
-def ptrace(rho:np.ndarray, qubit2keep:List[int])->np.ndarray:
+def ptrace(rho: np.ndarray, qubit2keep: List[int]) -> np.ndarray:
     """
     rho is the density matrix, and qubit2keep is a list of integers, starting from 0, to be left in the state after tracing out the rest
     returns density matrix after tracing out
     """
     if len(rho.shape) < 2:
-        rho = np.einsum('i,j->ij', rho, rho)
+        rho = np.einsum('i,j->ij', rho, dag(rho)[0,:])
     num_qubit = int(np.log2(rho.shape[0]))
     #    for i in range(len(qubit2keep)):
     #            qubit2keep[i]=num_qubit-1-qubit2keep[i]
@@ -201,7 +195,7 @@ def assert_correct_dimensions(matrix: np.ndarray) -> None:
     assert log2_cols.is_integer(), f"Number of columns ({num_cols}) is not a power of 2: log2(cols) = {log2_cols}"
 
 
-def pauli_string_decomposition(operator: np.ndarray) -> StringNumberList:
+def pauli_string_decomposition(operator: np.ndarray) -> List[Tuple[str, Union[int, float]]]:
     """
     Compute the Pauli string decomposition of an operator.
 
@@ -232,3 +226,49 @@ def pauli_string_decomposition(operator: np.ndarray) -> StringNumberList:
             pauli_strings.append((pauli_string, coefficient))
 
     return pauli_strings
+
+
+def is_consecutive(list_of_integers:List[int])->bool:
+    """
+
+    Args:
+        list_of_integers
+
+    Returns: bool: is this list comprised of consecutive integers?
+
+    """
+    return list(np.diff(list_of_integers)) == list(np.ones(len(list_of_integers) - 1))
+
+
+def produce_measurement(probabilities:List[float])->Tuple[List[int],str]:
+    """
+
+    Args:
+        probabilities: a list of probabilities representing all possible outcomes of quantum qubit measurement by index,
+            such that probabilities[i] is for the state bin(i)
+
+    Returns: a measurement result for each qubit
+
+    """
+    # produce measurment
+    p1 = [0] + probabilities
+    if np.sum(p1) > 0:
+        F = np.cumsum(p1 / np.sum(p1))
+    else:
+        F = np.cumsum(p1)
+    x = np.random.rand()
+    i = 1
+    while x > F[i]:
+        i += 1
+    n = math.log2(len(probabilities))
+    res = "{0:b}".format(i - 1)
+    while len(res) < n:
+        res = '0' + res
+    to_return = []
+    for s in res:
+        if s == '0':
+            to_return.append(1)
+        elif s == '1':
+            to_return.append(-1)
+    return to_return, res
+
