@@ -37,31 +37,36 @@ class OperatorPauliRepresentation:
         self.with_simulation = with_simulation
         if with_simulation:
             self.reg = QuantumRegister(Nqubits=self.system_size,
-                                       state0=tensor([np.array([0, 0]) for i in range(self.system_size)]),is_pure=True)
+                                       state0=tensor([np.array([1, 0]) for i in range(self.system_size)]),is_pure=True)
 
-    def __mul__(self, other: 'OperatorPauliRepresentation') -> 'OperatorPauliRepresentation':
+    def __mul__(self, other: Union['OperatorPauliRepresentation',int,float]) -> 'OperatorPauliRepresentation':
         """
 
         Args:
-            other: OperatorPauliRepresentation
+            other: OperatorPauliRepresentation or number
 
         Returns:
-            OperatorPauliRepresentation which is the multiplication of two OperatorPauliRepresentation
+            OperatorPauliRepresentation which is the multiplication of two OperatorPauliRepresentation or by a constant number
 
         """
-        assert isinstance(other,
-                          OperatorPauliRepresentation), f"Expected an instance of OperatorPauliRepresentation, got {type(other).__name__}"
-
-        new_PauliDecomposition = []
-        for S in self.pauli_decomposition:
-            s, s_f = S
-            for O in other.pauli_decomposition:
-                o, o_f = O
-                so, factor = pauli_string_multiplication(s, o)
-                new_PauliDecomposition.append((so, s_f * o_f * factor))
-        new_PauliDecomposition = simplify(new_PauliDecomposition)
-
-        return OperatorPauliRepresentation(PauliDecomposition=new_PauliDecomposition)
+        if (not isinstance(other,int)) and (not isinstance(other,float)):
+            assert isinstance(other,
+                              OperatorPauliRepresentation), f"Expected an instance of OperatorPauliRepresentation, got {type(other).__name__}"
+            new_PauliDecomposition = []
+            for S in self.pauli_decomposition:
+                s, s_f = S
+                for O in other.pauli_decomposition:
+                    o, o_f = O
+                    so, factor = pauli_string_multiplication(s, o)
+                    new_PauliDecomposition.append((so, s_f * o_f * factor))
+            new_PauliDecomposition = simplify(new_PauliDecomposition)
+            return OperatorPauliRepresentation(PauliDecomposition=new_PauliDecomposition)
+        else:
+            new_PauliDecomposition = []
+            for S in self.pauli_decomposition:
+                s, s_f = S
+                new_PauliDecomposition.append((s, s_f * other))
+            return OperatorPauliRepresentation(PauliDecomposition=new_PauliDecomposition)
 
     def __str__(self) -> str:
         """
@@ -88,6 +93,39 @@ class OperatorPauliRepresentation:
         for i in range(power - 1):
             result = result * self
         return result
+
+    def __add__(self,other: Union['OperatorPauliRepresentation',int,float]) -> 'OperatorPauliRepresentation':
+        if (not isinstance(other,int)) and (not isinstance(other,float)):
+            assert isinstance(other,
+                              OperatorPauliRepresentation), f"Expected an instance of OperatorPauliRepresentation, got {type(other).__name__}"
+            new_PauliDecomposition = []
+            for S in self.pauli_decomposition:
+                s, s_f = S
+                new_PauliDecomposition.append((s, s_f))
+            for O in other.pauli_decomposition:
+                o, o_f = O
+                new_PauliDecomposition.append((o, o_f))
+            new_PauliDecomposition = simplify(new_PauliDecomposition)
+            return OperatorPauliRepresentation(PauliDecomposition=new_PauliDecomposition)
+        else:
+            new_PauliDecomposition = self.pauli_decomposition + [(''.join(['I' for i in range(self.system_size)]),other)]
+            new_PauliDecomposition = simplify(new_PauliDecomposition)
+            return OperatorPauliRepresentation(PauliDecomposition=new_PauliDecomposition)
+
+    def toarray(self)->np.ndarray:
+        """
+
+        Returns: an ndarray representation of the operator
+
+        """
+        Operator = np.zeros((2**self.system_size,2**self.system_size)).astype(np.complex128)
+        for paulistring,coeff in self.pauli_decomposition:
+            pauli_op_list = []
+            for p in paulistring:
+                pauli_op_list.append(pauli_dict[p])
+            P = tensor(pauli_op_list)
+            Operator += coeff*P
+        return Operator
 
     def __generate_observable(self) -> None:
         """
@@ -249,14 +287,7 @@ class OperatorPauliRepresentation:
     def evaluate_ideal(self, state, is_pure=True):
         assert self.with_simulation, 'to measure, initiate OperatorPauliRepresentation with flag with_simulation=True'
         # turn to matrices and give the expectation value by trace or by inner products
-        Operator = np.zeros((2**self.system_size,2**self.system_size)).astype(np.complex128)
-        for paulistring,coeff in self.pauli_decomposition:
-            pauli_op_list = []
-            for p in paulistring:
-                pauli_op_list.append(pauli_dict[p])
-            P = tensor(pauli_op_list)
-            Operator += coeff*P
-
+        Operator = self.toarray()
         if is_pure:
             return np.einsum('i,ij,j->', state.conj(), Operator, state)
         else:
