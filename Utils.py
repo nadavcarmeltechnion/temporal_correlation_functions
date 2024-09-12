@@ -257,11 +257,11 @@ def produce_measurement(probabilities:List[float])->Tuple[List[int],str]:
     else:
         F = np.cumsum(p1)
     x = np.random.rand()
-    i = 1
+    i = 0
     while x > F[i]:
         i += 1
     n = math.log2(len(probabilities))
-    res = "{0:b}".format(i - 1)
+    res = "{0:b}".format(i)
     while len(res) < n:
         res = '0' + res
     to_return = []
