@@ -3,6 +3,7 @@ import numpy as np
 from itertools import product
 import math
 
+
 def check_pauli_string(P: str) -> bool:
     """
     checks if a certian str as a pauli string
@@ -131,7 +132,7 @@ def ptrace(rho: np.ndarray, qubit2keep: List[int]) -> np.ndarray:
     returns density matrix after tracing out
     """
     if len(rho.shape) < 2:
-        rho = np.einsum('i,j->ij', rho, dag(rho)[0,:])
+        rho = np.einsum('i,j->ij', rho, dag(rho)[0, :])
     num_qubit = int(np.log2(rho.shape[0]))
     #    for i in range(len(qubit2keep)):
     #            qubit2keep[i]=num_qubit-1-qubit2keep[i]
@@ -228,7 +229,7 @@ def pauli_string_decomposition(operator: np.ndarray) -> List[Tuple[str, Union[in
     return pauli_strings
 
 
-def is_consecutive(list_of_integers:List[int])->bool:
+def is_consecutive(list_of_integers: List[int]) -> bool:
     """
 
     Args:
@@ -240,7 +241,7 @@ def is_consecutive(list_of_integers:List[int])->bool:
     return list(np.diff(list_of_integers)) == list(np.ones(len(list_of_integers) - 1))
 
 
-def produce_measurement(probabilities:List[float])->Tuple[List[int],str]:
+def produce_measurement(probabilities: List[float]) -> Tuple[List[int], str]:
     """
 
     Args:
@@ -272,3 +273,66 @@ def produce_measurement(probabilities:List[float])->Tuple[List[int],str]:
             to_return.append(-1)
     return to_return, res
 
+
+def produce_j(j: int, n: int) -> np.ndarray:
+    """
+
+    Args:
+        j: a number representing qubit register in the basis state which is the binary version of this number
+        n: total number of qubits
+
+    Returns: a numpy vector representing the vector |j>
+
+    """
+    bin_j = bin(j)[2:]
+    while len(bin_j) < n:
+        bin_j = '0' + bin_j
+    j_vec = tensor([np.array([1, 0]) if bin_j[i] == '0' else np.array([0, 1]) for i in range(len(bin_j))])
+    return j_vec.reshape((2 ** len(bin_j), 1))
+
+
+def create_unitary(vector: np.ndarray) -> np.ndarray:
+    """
+
+    Args:
+        vector: a vector of coefficients, denote vector = a
+
+    Returns: a unitary matrix which has A|0> = 1/sum(|a_j|) * sum(a_j |j>)
+
+    """
+    a = len(vector)
+    vectors = np.zeros((a, a))
+    vectors[0, :] = vector
+    for j in range(a - 1):
+        vectors[1 + j, 1 + j] = 1
+    num_vectors = vectors.shape[0]
+    basis = np.zeros_like(vectors)
+
+    for i in range(num_vectors):
+        # Start with the current vector
+        v = vectors[i]
+
+        # Subtract projections of the current vector onto all previous basis vectors
+        for j in range(i):
+            proj = np.dot(v, basis[j]) * basis[j]
+            v = v - proj
+
+        # Normalize the vector to make it a unit vector
+        basis[i] = v / np.linalg.norm(v)
+
+    return basis.T  # Return the orthonormal basis as columns
+
+
+def projector_0(qubit_indices: List[int], N: int) -> np.ndarray:
+    """
+
+    Args:
+        qubit_indices: a list of indices, all smaller than N
+        N: total number of qubits
+
+    Returns: the projector onto the state in which all qubits in qubit_indices are |0>.
+
+    """
+    zero_proj = np.array([[1, 0], [0, 0]])
+    I2 = np.array([[1, 0], [0, 1]])
+    return tensor([zero_proj if j in qubit_indices else I2 for j in range(N)])

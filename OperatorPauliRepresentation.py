@@ -39,6 +39,9 @@ class OperatorPauliRepresentation:
             self.reg = QuantumRegister(Nqubits=self.system_size,
                                        state0=tensor([np.array([1, 0]) for i in range(self.system_size)]),is_pure=True)
 
+        self.__update_dict()
+
+
     def __mul__(self, other: Union['OperatorPauliRepresentation',int,float]) -> 'OperatorPauliRepresentation':
         """
 
@@ -111,6 +114,41 @@ class OperatorPauliRepresentation:
             new_PauliDecomposition = self.pauli_decomposition + [(''.join(['I' for i in range(self.system_size)]),other)]
             new_PauliDecomposition = simplify(new_PauliDecomposition)
             return OperatorPauliRepresentation(PauliDecomposition=new_PauliDecomposition)
+
+    def __eq__(self,other: 'OperatorPauliRepresentation')->bool:
+        """
+
+        Args:
+            other: OperatorPauliRepresentation
+
+        Returns: True if self is equal to other up to 1e-15 in each pauli string
+
+        """
+        equal = True
+        for key in self.pauli_dict:
+            try:
+                if np.abs(self.pauli_dict[key] - other.pauli_dict[key]) > 1e-8:
+                    equal = False
+            except:
+                print(f'self contains pauli {key} while other does not')
+                equal = False
+        return equal
+
+    def __update_dict(self)->None:
+        """
+
+        Returns: creates a pauli dict where keys are the pauli strings and values are the coefficients
+
+        """
+        self.pauli_dict = {}
+        for i in range(len(self.pauli_decomposition)):
+            self.pauli_dict[self.pauli_decomposition[i][0]] = self.pauli_decomposition[i][1]
+
+    def abs_1(self)->float:
+        return float(np.sum([np.abs(s[1]) for s in self.pauli_decomposition]))
+
+    def abs_2(self)->float:
+        return float(np.sqrt(np.sum([np.abs(s[1])**2 for s in self.pauli_decomposition])))
 
     def toarray(self)->np.ndarray:
         """

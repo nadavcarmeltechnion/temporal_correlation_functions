@@ -15,7 +15,7 @@ class QuantumRegister:
         the register
         """
         self.state = state0
-        print('building Pauli Strings')
+        # print('building Pauli Strings')
         self.Sx_list, self.Sy_list, self.Sz_list = initiate_pauli_strings_matrices(Nqubits)
         self.is_pure = is_pure
         self.Nqubits = Nqubits
