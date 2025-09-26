@@ -2,6 +2,13 @@ from typing import List, Tuple, Union, Optional
 import numpy as np
 from itertools import product
 import math
+import scipy
+import sympy
+from plotSettings import *
+from functools import reduce
+
+def double_factorial(n: int) -> int:
+    return reduce(int.__mul__, range(n,0,-2))
 
 
 def check_pauli_string(P: str) -> bool:
@@ -222,6 +229,8 @@ def pauli_string_decomposition(operator: np.ndarray) -> List[Tuple[str, Union[in
             pauli_product = np.kron(pauli_product, pauli_matrices[pauli_index])
 
         coefficient = np.trace(np.dot(pauli_product.conj().T, operator)) / (2 ** num_qubits)
+        if coefficient is np.nan:
+            continue
         if not np.isclose(coefficient, 0):
             pauli_string = ''.join([pauli_labels[p] for p in pauli_combination])
             pauli_strings.append((pauli_string, coefficient))
@@ -336,3 +345,84 @@ def projector_0(qubit_indices: List[int], N: int) -> np.ndarray:
     zero_proj = np.array([[1, 0], [0, 0]])
     I2 = np.array([[1, 0], [0, 1]])
     return tensor([zero_proj if j in qubit_indices else I2 for j in range(N)])
+
+
+def zerofy(A):
+    for i in range(A.shape[0]):
+        for j in range(A.shape[1]):
+            r = np.real(A[i,j])
+            im = np.imag(A[i,j])
+            if np.abs(im) < 1e-10:
+                im = 0
+            if np.abs(r) < 1e-10:
+                r = 0
+            A[i,j] = r+1j*im
+    return A
+
+
+def gaussian(x: Union[float, np.ndarray[float]], mu: float, sigma: float) -> Union[float, np.ndarray[float]]:
+    """
+
+    Args:
+        x: a point
+        mu: mean of the gaussian
+        sigma: std of the gaussian
+
+    Returns:
+        a normalized gaussian function
+    """
+    a = 1 / np.sqrt(2 * np.pi * sigma ** 2)
+    b = np.exp(-(x - mu) ** 2 / (2 * sigma ** 2))
+    return a * b
+
+
+def disturbed_circle(x: Union[float, np.ndarray[float]], Omega:float = 0.2) -> Union[float, np.ndarray[float]]:
+
+    a = np.sqrt((1-x**2)*np.heaviside(1-x**2, 1))
+    b = np.sqrt((Omega**2-x**2)*np.heaviside(Omega**2-x**2, 1))
+    return a+0.1*b/Omega**2
+
+def power_law_gaussian(x: Union[float, np.ndarray[float]], beta: float,Omega:float):
+    a = np.sqrt(2)*np.pi/(Omega*scipy.special.gamma((beta+1)/2))
+    b = np.abs(x/Omega)**beta * np.exp(-(x/Omega)**2)
+    return a*b
+
+def Liovillian(H,O):
+    return H@O-O@H
+
+def compute_recurrents_by_recursion(H,O0,N):
+    Nqubits = int(np.log2(H.shape[0]))
+    rho = np.eye(2 ** Nqubits) / 2 ** Nqubits
+    d1 = np.sqrt(np.trace(rho@dag(O0)@Liovillian(H,Liovillian(H,O0))) - 0)
+    O1 = 1/d1 * (Liovillian(H,O0))
+    Os = [O0,O1]
+    Ds = [0,d1]
+    while len(Os)<N+2:
+        print(len(Ds))
+        d_next = (np.sqrt(np.trace(rho@dag(Os[-1])@Liovillian(H,Liovillian(H,Os[-1]))) - Ds[-1]**2))
+        O_next = 1/d_next * (Liovillian(H,Os[-1])-Ds[-1]*Os[-2])
+        Ds.append(d_next)
+        Os.append(O_next)
+    return Ds[1:]
+
+def apply_liovillian_power(H, O, k):
+        tmp = O
+        for i in range(k):
+            tmp = Liovillian(H, tmp)
+        return tmp
+
+
+# x = np.linspace(-5,5,10000)
+# y = disturbed_circle(x,0.2)
+# z1 = power_law_gaussian(x,beta=0.25,Omega=1)
+# z2 = power_law_gaussian(x,beta=-0.25,Omega=1)
+# plt.plot(x,y)
+# plt.plot(x,z1)
+# plt.plot(x,z2)
+# plt.show()
+
+# k=11
+# S = [np.exp(1j*np.pi*n/k) for n in range(2*k)]
+# plt.scatter(np.real(S),np.imag(S))
+# plt.axis('equal')
+# plt.show()

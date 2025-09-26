@@ -1,5 +1,5 @@
 from OperatorPauliRepresentation import OperatorPauliRepresentation
-from PhysicsUtils import Hiesenberg_XXZ, gibbs_thermal_state
+from PhysicsUtils import Hiesenberg_XXZ, gibbs_thermal_state, TFIM
 from Utils import tensor, projector_0, ptrace, pauli_string_decomposition, dag, produce_j
 import numpy as np
 import matplotlib.pyplot as plt
@@ -13,19 +13,24 @@ from TemporalCorrelationByMoments import TemporalCorrelation, Moment
 from scipy.optimize import curve_fit
 from math import comb, factorial
 from Constants import pauli_dict
+import time
+from plotSettings import *
+import scipy.special
 
 check_classical_shadows = False
 check_gibbs_thermal_state = False
 check_mul_pow_add = False
-play_with_pyqsp = True
+play_with_pyqsp = False
 plot_normalization = False
-plot_correlations = False
+plot_correlations = True
 check_circuits = False
+get_feeling = False
+get_intuition_for_symbolic_expression_of_recurrents = False
 
-Nqubits = 4
+Nqubits = 6
 state = tensor([np.array([0, 1]) for i in range(Nqubits)])
 H = Hiesenberg_XXZ(J=0.5, delta=0.75, n=Nqubits, with_simulation=True)
-# print(H)
+H.plot()
 
 if check_mul_pow_add:
     print(H * H)
@@ -63,8 +68,8 @@ if check_gibbs_thermal_state:
     plt.show()
 
 if play_with_pyqsp:
-    oblivious_amplitude_amplification = False
-    approximate_general_transformations = True
+    oblivious_amplitude_amplification = True
+    approximate_general_transformations = False
     if oblivious_amplitude_amplification:
 
         # pg = pyqsp.phases.FPSearch()
@@ -84,8 +89,8 @@ if play_with_pyqsp:
         #     show_qsp_model_plot=False
         # )
 
-        def plot_OAA_deltas(deltas, d, logscale=True, fail=True):
-            plt.figure(figsize=[8, 5])
+        def plot_OAA_deltas(deltas, d, logscale=True, fail=True, response=False):
+            # plt.figure(figsize=[8, 5])
             for delta in deltas:
                 phiset = FPSearch().generate(d=d, delta=np.sqrt(delta))
                 adat = np.linspace(0., 1., 400)
@@ -97,21 +102,31 @@ if play_with_pyqsp:
                 if fail:
                     plt.plot(adat ** 2, 1 - abs(pdat) ** 2 / adat ** 2, label=f'$\delta^2={delta}$')
                 else:
-                    plt.plot(adat ** 2, abs(pdat) ** 2 / adat ** 2, label=f'$\delta^2={delta}$')
+                    if response:
+                        plt.plot(adat, abs(pdat), label=f'$\delta^2={delta}$')
+                    else:
+                        plt.plot(adat ** 2, abs(pdat) ** 2 / adat ** 2, label=f'$\delta^2={delta}$')
             # format plot
             if fail:
                 plt.ylabel("1 - output probability / input probability")
                 plt.ylim((1e-10, 1))
+                plt.xlabel("input probability")
             else:
-                plt.ylabel("output probability / input probability")
+                if response:
+                    plt.ylabel("f(x)")
+                    plt.xlabel("|x|")
+                    # plt.yscale('log')
+                else:
+                    plt.ylabel("output probability / input probability")
+                    plt.xlabel("input probability")
             if logscale:
-                # plt.yscale('log')
-                plt.xscale('log')
+                plt.yscale('log')
 
+            plt.xscale('log')
             plt.title(f'd={2 * d}')
-            plt.xlabel("input probability")
-            plt.legend()
-            plt.show()
+
+            # plt.legend()
+            # plt.show()
 
 
         def plot_OAA_ds(delta, ds, logscale=True, fail=True):
@@ -141,15 +156,206 @@ if play_with_pyqsp:
             plt.title(f'$\\delta^2$={delta}')
             plt.xlabel("input probability")
             plt.legend()
+            # plt.show()
+
+        def plot_Tn(n):
+            adat = np.linspace(0., 1., 10000)
+            Tn = np.cos(n*np.arccos(adat))
+            plt.plot(adat, abs(Tn),label=str(n))
+
+        def plot_Tn_x0_by_phases(x0):
+            if x0 < 0.5:
+                adat = np.linspace(0., 1.2 * x0, 10000)
+                d = 2*np.round(0.5*(np.pi/4/x0-1/2))
+            else:
+                adat = np.linspace(x0-(1-x0)*0.5,x0+(1-x0)*0.5, 10000)
+                d = np.round(np.pi/np.sqrt(2*(1-x0))-1/2)
+            phases = [-2*d*np.pi/2]
+            for i in range(int(2*d)):
+                phases.append(np.pi/2)
+            R = np.array([[[adat[i],np.sqrt(1-adat[i]**2)],[np.sqrt(1-adat[i]**2),-adat[i]]] for i in range(len(adat))])
+            result = np.array([np.eye(2) for i in range(len(adat))])
+            for j in range(int(2*d+1)):
+                expz = np.array([[[np.exp(-1j*phases[j]),0],[0,np.exp(1j*phases[j])]] for i in range(len(adat))])
+                result = np.einsum('kij,kjl,klm->kim',result,expz,R)
+                print(j)
+            Tn_by_phases = np.array([result[i,0,0] for i in range(len(adat))])
+            if x0 < 0.5:
+                plt.plot(adat, abs(Tn_by_phases),label='$T_{'+str(int(2*d+1))+'}(x)$ for x='+str(x0))
+            else:
+                plt.plot(1-adat, abs(Tn_by_phases), label='$T_{' + str(int(2 * d + 1)) + '}(x)$  for x=' + str(x0))
+
+        def plot_Tn_x0(x0):
+
+            if x0 < 0.5:
+                adat = np.linspace(0., 1.2 * x0, 10000)
+                d = 2*np.round(0.5*(np.pi/4/x0-1/2))
+                Tn = np.cos((2 * d + 1) * np.arccos(adat))
+            else:
+                adat = np.linspace(x0-(1-x0)*0.5,x0+(1-x0)*0.5, 10000)
+                d = np.round(np.pi/np.sqrt(2*(1-x0))-1/2)
+                Tn = np.cos((2 * d + 1) * np.arccos(adat))
+            if x0 < 0.5:
+                plt.plot(adat, abs(Tn),label='$T_{'+str(int(2*d+1))+'}(x)$ for x='+str(x0))
+            else:
+                plt.plot(1-adat, abs(Tn), label='$T_{' + str(int(2 * d + 1)) + '}(x)$ for x=' + str(x0))
+
+        def plot_response_polynomial(x0):
+
+            num_samples = 10000
+            adat = np.linspace(0, 1, num=num_samples)
+            if x0 < 0.5:
+                d = 2*np.round(0.5*(np.pi/4/x0-1/2))
+            else:
+                d = np.round(np.pi/np.sqrt(2*(1-x0))-1/2)
+
+            des_vals = np.cos(int(2 * d + 1) * np.arccos(adat))
+            phases = [-2 * d * np.pi / 2]
+            for i in range(int(2 * d)):
+                phases.append(np.pi / 2)
+            R = np.array([[[adat[i], np.sqrt(1 - adat[i] ** 2)], [np.sqrt(1 - adat[i] ** 2), -adat[i]]] for i in
+                          range(len(adat))])
+            result = np.array([np.eye(2) for i in range(len(adat))])
+            for j in range(int(2 * d + 1)):
+                expz = np.array([[[np.exp(-1j * phases[j]), 0], [0, np.exp(1j * phases[j])]] for i in range(len(adat))])
+                result = np.einsum('kij,kjl,klm->kim', result, expz, R)
+                print(j)
+            res_vals = np.array([result[i, 0, 0] for i in range(len(adat))])
+
+            PlotQSPPhases(phases, show=True)
+
+            # Generate simultaneous plots.
+            fig, axs = plt.subplots(2, sharex=True)
+            fig.suptitle('Approximating $T_{'+str(int(2*d+1))+'}(x)$ with QSP to machine precision')
+
+            # Standard plotting of relevant components.
+            axs[0].plot(adat[1:], res_vals[1:], 'r', label="QSP poly")
+            axs[0].plot(adat[1:], des_vals[1:], 'g', label="Ideal function")
+            # plt.plot(samples, re_vals, 'r', label="Real") # Unimportant real component.
+
+            total_diff = np.abs(res_vals - des_vals)
+            axs[1].plot(adat, total_diff, 'b', label="QSP vs true")
+
+            axs[1].set_yscale('log')
+
+            # Set axis limits and quality of life features.
+            axs[0].set_xlim([0, 1])
+            axs[0].set_ylim([-1.1, 1.1])
+            axs[0].set_ylabel("Component value")
+            axs[1].set_ylabel("Absolute error")
+            axs[1].set_xlabel('Input signal')
+
+            # Further cosmetic alterations
+            axs[0].spines['top'].set_visible(False)
+            axs[0].spines['right'].set_visible(False)
+            axs[1].spines['top'].set_visible(False)
+            axs[1].spines['right'].set_visible(False)
+
+            axs[0].legend(loc="upper right")
+            axs[1].legend(loc="upper right")
+
+            plt.show()
+
+        def find_best_Tn(x0,epsilon):
+            best_fit = 0
+            best_dist = 2
+            d = 1
+            while best_dist > epsilon:
+                n = int(2*d+1)
+                T = np.cos(n*np.arccos(x0))
+                if np.abs(np.abs(T)-1) < best_dist:
+                    best_dist = np.abs(np.abs(T)-1)
+                    best_fit = n
+                    print(best_dist)
+                    print(best_fit)
+                d += 1
+
+        find_best_Tn(0.97,0.001)
+
+        # plot_response_polynomial(0.3)
+
+
+        # plot_Tn_x0_by_phases(0.01)
+
+
+
+
+        # plot_Tn_x0(0.0001)
+        # plot_Tn_x0(0.001)
+        # plot_Tn_x0(0.01)
+        # plot_Tn_x0(0.1)
+        # plot_Tn_x0(0.99)
+        # plot_Tn_x0(0.999)
+        # plot_Tn_x0(0.9999)
+
+        # plt.ylabel("f(x)")
+        # plt.xlabel("1-x")
+        # plt.xlabel("x")
+        # plt.xscale('log')
+        # plt.legend()
+        # plt.show()
+
+        def plot_scaling():
+            phiset = FPSearch().generate(d=2, delta=np.sqrt(0.1))
+            print(phiset)
+            epsilon = 0.1
+            query_complexity = 4
+            depth = 1
+            depths = []
+            output_probabilities = []
+            prev_depth = 1
+            prev_amp = 0
+            real_output_prob = 0
+            real_depth = 0
+            loop = True
+            while real_output_prob <= 1-epsilon and loop:
+
+                output_amplitude = np.array([10 ** (-4)])
+                depth = 1
+
+                if loop:
+                    while real_output_prob+abs(output_amplitude)**2 <= 1 - epsilon:
+                        a = real_output_prob+abs(output_amplitude)**2
+                        prev_amp = output_amplitude
+                        prev_depth = depth
+                        qspr = ComputeQSPResponse(output_amplitude,
+                                                  phiset,
+                                                  signal_operator="Wx",
+                                                  measurement="z")
+                        output_amplitude = qspr['pdat']
+                        depth *= query_complexity
+
+                        depths.append(real_depth+depth)
+                        output_probabilities.append(a)
+                    loop = False
+
+                depths.pop()
+                output_probabilities.pop()
+
+                real_output_prob += abs(prev_amp)**2
+                real_depth += prev_depth
+
+                depths.append(real_depth)
+                output_probabilities.append(real_output_prob)
+
+                print(depth)
+                print(real_output_prob)
+                print()
+
+
+            plt.scatter(depths[:-1],output_probabilities[:-1])
+            plt.yscale('log')
+            plt.ylim((10**(-8)*0.5,2))
+            plt.xscale('log')
+            plt.ylabel("output probability")
+            plt.xlabel("number of queries to block-encoding")
             plt.show()
 
 
-        # plot_OAA([0.1,0.5,0.9],8,logscale=True,fail=True)
-        # plot_OAA_deltas([0.1,0.5,0.9],10,logscale=True,fail=False)
 
         # plot_OAA_deltas([0.01,0.1,0.5],2,logscale=True,fail=True)
         # plot_OAA_deltas([0.01,0.1,0.5],16,logscale=False,fail=False)
-        # plot_OAA_deltas([0.01,0.1,0.5],8,logscale=False,fail=False)
+        # plot_OAA_deltas([0.01,0.1,0.5],8,logscale=True,fail=True)
 
         # plot_OAA_ds(0.01,[2,4,8],logscale=True,fail=True)
         # plot_OAA_ds(0.01,[1,2,4,8,16],logscale=False,fail=False)
@@ -158,31 +364,32 @@ if play_with_pyqsp:
         # plot_OAA_ds(0.5,[1,2,4,8,16],logscale=False,fail=False)
         # plot_OAA_ds(0.5,[1,2,4,8,16],logscale=True,fail=False)
 
-        deltas = np.geomspace(1e-100, 1, 101)
-        ds = np.linspace(0, 128, 129)
-        Ds, Deltas_sq = np.meshgrid(ds, deltas)
-        amplifications = np.ones_like(Ds)
-        for i in range(len(deltas)):
-            for j in range(len(ds)):
-                try:
-                    phiset = FPSearch().generate(d=ds[j], delta=np.sqrt(deltas[i]))
-                    amplitudes = [1e-50]
-                    qspr = ComputeQSPResponse(np.array(amplitudes),
-                                              phiset,
-                                              signal_operator="Wx",
-                                              measurement="z")
-                    pdat = qspr['pdat']
-                    print(i, j, np.max(np.abs(pdat)) / amplitudes[np.argmax(np.abs(pdat))])
-                    # amplifications[i,j] = np.abs(pdat)**2/1e-6
-                    amplifications[i, j] = np.max(np.abs(pdat)) / amplitudes[np.argmax(np.abs(pdat))]
-                except:
-                    pass
-        plt.title("output / input")
-        plt.ylabel('$log_{10}(\\delta^2)$')
-        plt.xlabel('degree polynomial')
-        plt.pcolormesh(Ds, np.log10(Deltas_sq), amplifications)
-        plt.colorbar()
-        plt.show()
+        def plot_2d_scale_space():
+            deltas = np.geomspace(1e-100, 1, 101)
+            ds = np.linspace(0, 128, 129)
+            Ds, Deltas_sq = np.meshgrid(ds, deltas)
+            amplifications = np.ones_like(Ds)
+            for i in range(len(deltas)):
+                for j in range(len(ds)):
+                    try:
+                        phiset = FPSearch().generate(d=ds[j], delta=np.sqrt(deltas[i]))
+                        amplitudes = [1e-50]
+                        qspr = ComputeQSPResponse(np.array(amplitudes),
+                                                  phiset,
+                                                  signal_operator="Wx",
+                                                  measurement="z")
+                        pdat = qspr['pdat']
+                        print(i, j, np.max(np.abs(pdat)) / amplitudes[np.argmax(np.abs(pdat))])
+                        # amplifications[i,j] = np.abs(pdat)**2/1e-6
+                        amplifications[i, j] = np.max(np.abs(pdat)) / amplitudes[np.argmax(np.abs(pdat))]
+                    except:
+                        pass
+            plt.title("output / input")
+            plt.ylabel('$log_{10}(\\delta^2)$')
+            plt.xlabel('degree polynomial')
+            plt.pcolormesh(Ds, np.log10(Deltas_sq), amplifications)
+            plt.colorbar()
+            plt.show()
 
     if approximate_general_transformations:
         beta = 1
@@ -328,10 +535,10 @@ if play_with_pyqsp:
             plt.show()
 
 
-        # plot_response_polynomial(6)
+        plot_response_polynomial(6)
         # plot_responce_gibbs(2,2)
         # plot_responce_gibbs(2,10)
-        plot_responce_gibbs(10, 30)
+        # plot_responce_gibbs(10, 30)
         # plot_response_polynomial(8)
 
 if plot_normalization:
@@ -409,15 +616,16 @@ if plot_normalization:
     # plt.show()
 
 if plot_correlations:
-    H_ = Hiesenberg_XXZ(J=0.5, delta=0.75, n=5, with_simulation=True)
+    H_ = Hiesenberg_XXZ(J=0.5, delta=0.75, n=10, with_simulation=True)
     H = H_.toarray()
-    S_ = OperatorPauliRepresentation(PauliDecomposition=[('IZIIX', 1)])
+    S_ = OperatorPauliRepresentation(PauliDecomposition=[('ZIIIIIIIII', 1)])
     S = S_.toarray()
     times = np.linspace(0, 50, 1001)
     only_direct_beta_time = False
     show_fixed_time_convergence = False
     show_time_moments = False
     show_moment_extrapolation = False
+    show_recurrents = True
     if show_time_moments:
         rho = gibbs_thermal_state(H_, beta=1)
         maximal_moment_numbers = [2, 16, 30, 44]
@@ -568,12 +776,38 @@ if plot_correlations:
         plt.xlabel('N/2')
         plt.legend(loc='lower right')
         plt.show()
+    if show_recurrents:
+        print(f'H={H_}')
+        print(f'S={S_}')
+        t0 = time.time()
+        tmp = TemporalCorrelation(H, S)
+        rho = gibbs_thermal_state(H_, beta=0)
+        # solutions = tmp.calculate_recurrents(rho,16,by_recursion=True)
+        t1 = time.time()
+        print(t1-t0)
+        solutions = [2.00000000000000, 3.08220700148449, 2.93795489199008, 3.67188647985261, 3.87910401400194, 4.66555572901774, 4.85386900290210, 5.52367292300929]
+        solutions_1 = solutions[0:3]
+        solutions_2 = solutions[0:3]
+        for j in range(3,10):
+            b = (solutions_2[j-2]**2 + solutions_2[j-1]**2)/np.sqrt(solutions_2[j-2]**2 + 2*solutions_2[j-1]**2) - solutions_2[j-1]*np.sqrt((solutions_2[j-3]**2 + 2*solutions_2[j-2]**2)/(solutions_2[j-2]**2 + 2*solutions_2[j-1]**2))
+            a = solutions_1[j-2]+solutions_1[j-1]**2/solutions_1[j-2]-solutions_1[j-1]*solutions_1[j-3]/solutions_1[j-2]
+            solutions_1.append(a)
+            solutions_2.append(b)
+        print(solutions)
+        print(solutions_1)
+        print(solutions_2)
+        # tmp = TemporalCorrelation(H, S)
+        # rho = gibbs_thermal_state(H_, beta=0)
+        # tmp.calculate_recurrents(rho,14,by_recursion=False)
+        #
+        # t2 = time.time()
+        # print(t2-t1)
 
 if check_circuits:
-    n = 4
-    H_ = Hiesenberg_XXZ(J=0.5, delta=0.75, n=n, with_simulation=True)**2
+    n = 1
+    # H_ = Hiesenberg_XXZ(J=0.5, delta=0.75, n=n, with_simulation=True)**2
 
-    # H_ = OperatorPauliRepresentation(PauliDecomposition=[('X', 1)])
+    H_ = OperatorPauliRepresentation(PauliDecomposition=[('X', 1),('I',1)])
     print(H_)
     H = H_.toarray()
     S_ = OperatorPauliRepresentation(PauliDecomposition=[('II', 1)])
@@ -615,3 +849,84 @@ if check_circuits:
     pauli_dec = pauli_string_decomposition(H_over_alpha)
     H_over_alpha_ = OperatorPauliRepresentation(pauli_dec)
     print(H_over_alpha_)
+
+if get_feeling:
+
+    H = TFIM(1,1,3)
+    print(H)
+    print(H**2)
+    print(H**4)
+    print(H**6)
+    print(H**8)
+
+    # for N in [2, 4, 6, 8, 10]:
+    #     res = []
+    #     ns = [2, 3, 4, 5, 6, 7, 8, 9]
+    #     for n in ns:
+    #         H_ = Hiesenberg_XXZ(J=0.5, delta=0.75, n=n, with_simulation=False)
+    #         H = H_.toarray()
+    #         S_ = OperatorPauliRepresentation(PauliDecomposition=[('I'*n, 1)])
+    #         S = S_.toarray()
+    #         k = int(N/2)
+    #         a = H_.abs_1() ** N
+    #         b = (np.trace(S @ np.linalg.matrix_power(H,N-k) @ S @ np.linalg.matrix_power(H,k)))
+    #         # b = ((S_*H_**(N-k)*S_*H_**k).trace())**(1/N)
+    #         res.append(a/b)
+    #         print(n)
+    #     plt.scatter(ns,res,label=str(N))
+    #     print(res)
+    # plt.legend()
+    # plt.yscale('log')
+    # plt.show()
+
+if get_intuition_for_symbolic_expression_of_recurrents:
+    def get_num_components(n):
+        s = []
+        for l1 in range(int(n / 2) + 1):
+            for l2 in range(int((n + 1) / 2) + 1):
+                for k1 in range(n - 2 * l1 + 1):
+                    for k2 in range(n - 2 * l2 + 1):
+                        s.append((n - 2 * l1 - k1, n - 2 * l2 - k2 + k1, k2))
+        return len(s),len(set(s))
+
+    def get_components_dict(n):
+        s = {}
+        for l1 in range(int(n / 2) + 1):
+            for l2 in range(int((n + 1) / 2) + 1):
+                for k1 in range(n - 2 * l1 + 1):
+                    for k2 in range(n - 2 * l2 + 1):
+                        if (n - 2 * l1 - k1, n - 2 * l2 - k2 + k1, k2) not in s:
+                            s[(n - 2 * l1 - k1, n - 2 * l2 - k2 + k1, k2)] = [[l1,l2,k1,k2]]
+                        else:
+                            s[(n - 2 * l1 - k1, n - 2 * l2 - k2 + k1, k2)].append([l1,l2,k1,k2])
+        return s
+
+    n = 20
+    s_dict = get_components_dict(n)
+    for s in s_dict:
+        print(s,s_dict[s])
+    ns = list(range(100))
+    ns = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,30,40,50,60,70,80,90,100,120,140,160,180,200]
+    n1,n2 = [],[]
+    t0 = time.time()
+    for n in ns:
+        t0 = time.time()
+        a,b = get_num_components(n)
+        t1 = time.time()
+        print(n,t1-t0)
+        n1.append(a)
+        n2.append(b)
+
+    plt.plot(ns,n1,label='len list')
+    plt.plot(ns,n2,label='len set')
+    plt.legend()
+    plt.show()
+
+
+
+
+
+
+
+
+

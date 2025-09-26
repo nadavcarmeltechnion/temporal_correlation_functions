@@ -1,14 +1,73 @@
 import numpy as np
 from scipy.linalg import expm
-from Utils import dag, produce_j, create_unitary, tensor, projector_0, pauli_string_decomposition
+from Utils import dag, produce_j, create_unitary, tensor, projector_0, pauli_string_decomposition, zerofy
 from math import comb, factorial
 from typing import List, Tuple, Union, Optional
 from QuantumRegister import QuantumRegister
 from OperatorPauliRepresentation import OperatorPauliRepresentation
 import scipy as sp
-import qutip as qt
+# import qutip as qt
 from Constants import pauli_dict
+import sympy
+from collections import defaultdict
 
+def simplify_addition_of_conjugate_expression(expr:sympy.Expr) -> sympy.Expr:
+    """
+
+    Args:
+        expr: a sum of expressions of the form alligible to "simplify_conjugate_expression"
+
+    Returns: the simplified expression as a sum
+
+    """
+    expr = sympy.expand(expr)
+    # print(expr)
+    terms = sympy.Add.make_args(expr)
+    simplified_terms = [simplify_conjugate_expression(term) for term in terms]
+    return sympy.Add(*simplified_terms)
+
+def simplify_conjugate_expression(expr: sympy.Expr) -> sympy.Expr:
+    """
+
+    Args:
+        expr: a single multiplicative expression (no additions) with terms that are either integers, absolute values,
+         conjugates of numbers or powers of complex, abs of conj numbers.
+
+    Returns: a simplified expression where d*conj(d) = |d|^2
+
+    """
+    # Factor the expression into its multiplicative terms
+    factors = sympy.Mul.make_args(expr)
+
+    # Initialize counters for occurrences of symbols and their conjugates
+    count_conj = defaultdict(int)
+    count = defaultdict(int)
+
+    # Count appearances of symbols and their conjugates
+    simplified_expr = 1
+    for factor in factors:
+        if isinstance(factor, sympy.conjugate):
+            count_conj[factor.args[0]] += 1
+        elif isinstance(factor,(sympy.Abs,sympy.Integer)):
+            simplified_expr *= factor
+        elif isinstance(factor,sympy.Pow):
+            if isinstance(factor.args[0],(sympy.Abs,sympy.Integer)):
+                simplified_expr *= factor
+            elif isinstance(factor.args[0], sympy.conjugate):
+                count_conj[factor.args[0].args[0]] += factor.args[1]
+            else:
+                count[factor.args[0]] += factor.args[1]
+        else:
+            count[factor] += 1
+
+    # Build the simplified expression
+    for symbol, num in count.items():
+        if num == count_conj[symbol]:
+            simplified_expr *= sympy.Abs(symbol) ** (2*num)
+        else:
+            raise Exception('non-equal d and conj(d) amounts')
+
+    return simplified_expr
 
 class Moment:
     def __init__(self, N: int, H: Union[np.ndarray,'OperatorPauliRepresentation'], S: Union[np.ndarray,'OperatorPauliRepresentation']) -> None:
@@ -84,14 +143,24 @@ class Moment:
         I_anc = np.eye(2**n_qubits_ancilla_AALCU)
         P_tot = projector_0([j for j in range(n_tot)], n_tot)
         S_chi = tensor([I_anc-2*P_chi,I_sys])
+        print('S_chi',S_chi)
         S_0 = np.eye(2**n_tot)-2*P_tot
+        print('S_0', S_0)
         Q = -B_H @ S_0 @ dag(B_H) @ S_chi
+        print('Q',Q)
+        print('S_chi @ B_H:')
+        print(zerofy(S_chi @ B_H))
+        print('dag(B_H) @ S_chi @ B_H:')
+        print(zerofy(dag(B_H) @ S_chi @ B_H))
+        print('S_0 @ dag(B_H) @ S_chi @ B_H:')
+        print(zerofy(S_0 @ dag(B_H) @ S_chi @ B_H))
+        print('-B_H @ S_0 @ dag(B_H) @ S_chi @ B_H:')
+        print(zerofy(-B_H @ S_0 @ dag(B_H) @ S_chi @ B_H))
         Q_ = np.linalg.matrix_power(Q,num_times)
         return Q_ @ B_H
 
     def QSP(self):
         pass
-
 
 class TemporalCorrelation:
     def __init__(self, H: np.ndarray, S: np.ndarray) -> None:
@@ -104,6 +173,7 @@ class TemporalCorrelation:
         self.H = H
         self.S = S
         self.moments = []
+        self.recurrent_expressions = []
 
     def direct_computation(self, rho: np.ndarray, t: float) -> float:
         """
@@ -136,7 +206,8 @@ class TemporalCorrelation:
         for k in range(N + 1):
             SHSH = self.S @ np.linalg.matrix_power(self.H, N - k) @ self.S @ np.linalg.matrix_power(self.H, k)
             HSHS = np.linalg.matrix_power(self.H, N - k) @ self.S @ np.linalg.matrix_power(self.H, k) @ self.S
-            moment += (-1) ** k * comb(N, k) * (np.trace(rho @ SHSH) + np.trace(rho @ HSHS))
+            moment += 0.5 * (-1) ** k * comb(N, k) * (np.trace(rho @ SHSH) + np.trace(rho @ HSHS))
+            # moment += (-1) ** k * comb(N, k) * (np.trace(rho @ SHSH) + np.trace(rho @ HSHS))
         return moment
 
     def direct_computation_by_moments(self, rho: np.ndarray, Nmax: int, t: float) -> float:
@@ -167,3 +238,111 @@ class TemporalCorrelation:
                 index += 1
 
         return ret
+
+    def calculate_recurrents(self,rho: np.ndarray, Nmax: int, by_recursion: bool=True)->List[float]:
+
+        if Nmax % 2 == 1:
+            Nmax = Nmax - 1
+
+        if Nmax == 2:
+            deltas = [sympy.symbols(f'd_{1}', positive=True)]
+        else:
+            deltas = [sympy.symbols(f'd_{i}', positive=True) for i in range(1, Nmax + 1)]
+
+        for N in range(2 * len(self.moments), Nmax + 1):
+            if N % 2 == 0:
+                self.moments.append(self.direct_computation_of_moment(rho, N))
+                if by_recursion:
+                    self.recurrent_expressions.append(equation_generator(N))
+                else:
+                    self.recurrent_expressions.append(equation_generator_by_symbolic_matrix(N))
+                # print(N)
+                # print(f'mu_{N} = {np.real(self.moments[-1])}')
+                # sympy.pprint(self.recurrent_expressions[-1], use_unicode=False, wrap_line=True, num_columns=150)
+
+        # print('\n\nsolving equations by order:')
+        solutions = []
+        for i,moment in enumerate(self.moments):
+            if i > 0:
+                # print(f'{np.real(moment)}={self.recurrent_expressions[i]}')
+                equation = sympy.Eq(np.real(moment), self.recurrent_expressions[i])
+                d_solution = sympy.solve(equation, deltas[i-1])
+                if d_solution == []:
+                    raise Exception(f'unsolvable equation:{np.real(moment)}={self.recurrent_expressions[i]}')
+                else:
+                    d = d_solution[0]
+                for j in range(i,len(self.recurrent_expressions)):
+                    self.recurrent_expressions[j] = self.recurrent_expressions[j].subs({deltas[i-1]:d})
+                solutions.append(d_solution[0])
+                # print(d_solution)
+        # print(solutions)
+        return solutions
+
+def equation_generator(moment_number):
+    if moment_number == 2:
+        deltas = [sympy.symbols(f'd_{1}',positive=True)]
+    else:
+        deltas = [sympy.symbols(f'd_{i}',positive=True) for i in range(1, moment_number + 1)]
+
+    # return sympy.expand(equation_generator_by_recursion(moment_number,0,deltas))
+    return sympy.expand(equation_generator_by_recursion(moment_number,0,deltas))
+
+def equation_generator_by_recursion(moment_number, position_number,deltas):
+    """
+    somewhere there is a mistake in the recursion formula
+    Args:
+        moment_number:
+        position_number:
+        deltas:
+
+    Returns:
+
+    """
+
+    # print(f'called moment_number={moment_number} and position_number={position_number}')
+    # Base case: mu(0, k) = delta(k, 0)
+    if moment_number == 0:
+        return sympy.KroneckerDelta(position_number, 0)
+
+    if position_number == 0:
+        term1 = abs(deltas[0]) ** 2 * equation_generator_by_recursion(
+            moment_number - 2, position_number, deltas)
+        if len(deltas) >= 2:
+            term2 = deltas[0] * deltas[1] * equation_generator_by_recursion(moment_number - 2,
+                                                                                                    position_number + 2,
+                                                                                                    deltas)
+        else:
+            term2 = 0
+        term3 = 0
+        return term1 + term2 + term3
+
+    else:
+        # Recurrence relation for mu(2n, 2r)
+        r = position_number // 2
+        term1 = (abs(deltas[2 * r-1]) ** 2 + abs(deltas[2 * r + 1-1]) ** 2) * equation_generator_by_recursion(moment_number - 2, position_number,deltas)
+        term2 = deltas[2 * r + 1-1] * deltas[2 * r + 2-1] * equation_generator_by_recursion(moment_number - 2, position_number + 2,deltas)
+        term3 = sympy.conjugate(deltas[2 * r-1]) * sympy.conjugate(deltas[2 * r - 1-1]) * equation_generator_by_recursion(moment_number - 2,position_number - 2,deltas)
+        return term1 + term2 + term3
+
+def equation_generator_by_symbolic_matrix(moment_number):
+
+    if moment_number == 2:
+        deltas = [sympy.symbols(f'd_{1}',positive=True)]
+    else:
+        deltas = [sympy.symbols(f'd_{i}',positive=True) for i in range(1, moment_number + 1)]
+
+    M = sympy.zeros(int(moment_number/2)+1,int(moment_number/2)+1)
+    for i in range(int(moment_number/2)+1):
+        for j in range(int(moment_number/2)+1):
+            if i==j-1:
+                M[i,j] = deltas[i]
+            if j==i-1:
+                M[i, j] = deltas[j]
+
+    if moment_number == 0:
+        return 0
+    mat = M*M
+    for j in range(int(moment_number/2)-1):
+        mat = mat*M*M
+
+    return sympy.expand(mat)[0,0]
